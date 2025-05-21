@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monk Interview Bot - Speech to Speech</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f5f5f5;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      background: #0078d7;
+      color: white;
+      padding: 1rem;
+      text-align: center;
+    }
+    #chat {
+      flex: 1;
+      padding: 1rem;
+      overflow-y: auto;
+    }
+    .message {
+      max-width: 70%;
+      padding: 0.75rem;
+      border-radius: 1rem;
+      margin: 0.5rem 0;
+      line-height: 1.4;
+    }
+    .user { background: #0078d7; color: white; margin-left: auto; }
+    .bot { background: #e0e0e0; color: #000; margin-right: auto; }
+    form, #chatForm {
+      display: flex;
+      flex-wrap: wrap;
+      padding: 1rem;
+      background: white;
+      border-top: 1px solid #ccc;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    input, button {
+      padding: 0.75rem;
+      border-radius: 0.5rem;
+      border: 1px solid #ccc;
+      font-size: 1rem;
+    }
+    input[type="text"], input[type="email"], input[type="file"] {
+      flex: 1;
+      min-width: 150px;
+    }
+    #messageInput {
+      flex: 2;
+    }
+    .hidden { display: none; }
+    #micBtn {
+      background: #0078d7;
+      border: none;
+      color: white;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 20px;
+    }
+    #micBtn.recording {
+      background: red;
+    }
+  </style>
+</head>
+<body>
+  <header><h1>Monk Interview Bot (Speech to Speech)</h1></header>
+  <main id="chat"></main>
+
+  <!-- Initial Form -->
+  <form id="startForm">
+    <input type="email" id="userId" placeholder="Your email (used as ID)" required />
+    <input type="text" id="role" placeholder="Enter role you're applying for" required />
+    <input type="file" id="resume" accept="application/pdf" required />
+    <button type="submit">Start Interview</button>
+  </form>
+
+  <!-- Chat Form -->
+  <form id="chatForm" class="hidden" autocomplete="off">
+    <input type="text" id="messageInput" placeholder="Speak or type your answer..." autocomplete="off" />
+    <button type="submit">Send</button>
+    <button type="button" id="micBtn" title="Toggle microphone">🎤</button>
+  </form>
+
+  <script>
+    const startForm = document.getElementById('startForm');
+    const chatForm = document.getElementById('chatForm');
+    const input = document.getElementById('messageInput');
+    const roleInput = document.getElementById('role');
+    const userIdInput = document.getElementById('userId');
+    const resumeInput = document.getElementById('resume');
+    const chat = document.getElementById('chat');
+    const micBtn = document.getElementById('micBtn');
+
+    let role = '';
+    let userId = '';
+
+    function addMessage(text, sender) {
+      const div = document.createElement('div');
+      div.className = `message ${sender}`;
+      div.textContent = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    // Text to Speech
+    function speak(text) {
+      if (!('speechSynthesis' in window)) return;
+      const utterance = new SpeechSynthesisUtterance(text);
+      window.speechSynthesis.speak(utterance);
+    }
+
+    // Speech to Text
+    let recognition;
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.interimResults = false;
+      recognition.continuous = false;
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        input.value = transcript;
+        // Automatically submit the chat form after speech recognized
+        chatForm.dispatchEvent(new Event('submit', {cancelable: true}));
+      };
+
+      recognition.onstart = () => {
+        micBtn.classList.add('recording');
+      };
+
+      recognition.onend = () => {
+        micBtn.classList.remove('recording');
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Speech recognition error', event.error);
+        micBtn.classList.remove('recording');
+      };
+    } else {
+      micBtn.style.display = 'none'; // Hide mic button if no support
+    }
+
+    micBtn.addEventListener('click', () => {
+      if (micBtn.classList.contains('recording')) {
+        recognition.stop();
+      } else {
+        recognition.start();
+      }
+    });
+
+    startForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const formData = new FormData();
+      userId = userIdInput.value.trim();
+      role = roleInput.value.trim();
+      const resume = resumeInput.files[0];
+
+      formData.append('email', userId);
+      formData.append('role', role);
+      formData.append('resume', resume);
+
+      const res = await fetch('/start', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await res.json();
+      addMessage(`Started interview for ${userId}`, 'bot');
+
+      startForm.classList.add('hidden');
+      chatForm.classList.remove('hidden');
+
+      // First AI question (empty user answer to trigger first prompt)
+      const res2 = await fetch('/interview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answer: "", role, user_id: userId })
+      });
+      const data2 = await res2.json();
+      addMessage(data2.result, 'bot');
+      speak(data2.result);
+    });
+
+    chatForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const userMsg = input.value.trim();
+      if (!userMsg) return;
+
+      addMessage(userMsg, 'user');
+      input.value = '';
+
+      const res = await fetch('/interview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answer: userMsg, role, user_id: userId })
+      });
+
+      const data = await res.json();
+      addMessage(data.result, 'bot');
+      speak(data.result);
+    });
+  </script>
+</body>
+</html>
